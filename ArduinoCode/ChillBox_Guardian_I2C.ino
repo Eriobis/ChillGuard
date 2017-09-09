@@ -1,5 +1,6 @@
 
 #include <U8x8lib.h>
+#include <Wire.h>
 #ifdef U8X8_HAVE_HW_SPI
 #include <SPI.h>
 #endif
@@ -51,6 +52,11 @@ void setup() {
 
     EnableCooler();
     delay(2000);        //Give 2 sec to the system to start 
+
+    //Init I2C bus
+    Wire.begin(8);                // join i2c bus with address #8
+    Wire.onReceive(receiveEvent); // register event
+    Wire.onRequest(i2cRequest);
 
     //Init software timers
     FlowSoftTimer = millis();
@@ -151,3 +157,78 @@ void FlowPulseHandler()
     TotalPulseCount ++;
 }
 
+// function that executes whenever data is received from master
+void receiveEvent(int howMany) {
+    uint8_t I2C_Command;
+
+    while (Wire.available()) 
+    {   // loop through all but the last
+        I2C_Command = Wire.read();
+    }
+
+    if (I2C_Command > 0) { // We have indeed received a valid command
+        switch (I2C_Command){
+     
+        case 0x01:
+            Serial.println("Setting Infos Register");
+            // Store the actual request so that the onRequest handler knows
+            // what to do
+            I2C_RequestCommand = I2C_Command;
+            break;
+        
+        case 0x02:
+            Serial.println("Setting Flow Register");
+            // Store the actual request so that the onRequest handler knows
+            // what to do
+            I2C_RequestCommand = I2C_Command;
+            break;
+
+        case 0x03:
+            Serial.println("Setting Temperature Register");
+            // Store the actual request so that the onRequest handler knows
+            // what to do
+            I2C_RequestCommand = I2C_Command;
+            break;
+
+        case 0x04:
+            Serial.println("Setting Cooler Register");
+            // Store the actual request so that the onRequest handler knows
+            // what to do
+            I2C_RequestCommand = I2C_Command;
+            break;
+            default:
+            break;
+        }
+     
+        I2C_Command = 0;
+      }
+}
+
+void i2cRequest(void){
+
+    Serial.println("OnRequestHandler");
+    if (I2C_RequestCommand > 0) 
+    { // We have indeed received a valid command
+        switch (I2C_RequestCommand){
+     
+        case 0x01:
+            Serial.println("Sending Infos");
+
+            break;
+        
+        case 0x02:
+            Serial.println("Sending Flow");
+            //Wire.write(0x50);
+            Wire.print(Flow,2);
+            break;
+
+        case 0x03:
+            Serial.println("Sending Temperature");
+
+            break;
+
+            default:
+            break;
+        }
+    }
+}
