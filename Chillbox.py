@@ -22,7 +22,6 @@ PID_SAMPLE_RATE     =   2
 P                   =   40
 I                   =   6.00
 D                   =   3.00
-SETPOINT            =   20.0
 
 thermo_sensor = None
 
@@ -52,7 +51,6 @@ if __name__ == "__main__":
     pid = PID(P, I, D)
     pid.clear()
     pid.setSampleTime(PID_SAMPLE_RATE)
-    pid.SetPoint = SETPOINT
 
     out.initCooler()
 
@@ -69,6 +67,11 @@ if __name__ == "__main__":
         Flow = 0.0
         FlowPPS = 0.0
         SystemState = 3
+        
+        fp = open("setpoint", mode = 'r')
+        setpoint = int(fp.read())
+        pid.SetPoint = setpoint
+        fp.close()
         #Get the info from Arduino
         try:
             #Get the next line sent by arduino ( this is blocking, timeout is 5 secs )
