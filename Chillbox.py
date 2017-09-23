@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import spidev
 import Adafruit_DHT
 import MySQLdb
 import httplib, urllib
@@ -10,27 +11,33 @@ import psutil
 import time
 import serial
 import json
+import sys
+import signal
+#Import our local classes
+from modules.pid import PID
+from modules.outputs import outputs
 
-humidity = None
-temperature = None
+#defines 
+PID_SAMPLE_RATE     =   2
+P                   =   40
+I                   =   6.00
+D                   =   3.00
+SETPOINT            =   20.0
+
 thermo_sensor = None
 
-def SendThingSpeak():
-    params = urllib.urlencode({'field1': temperature, 'field2': humidity, 'field3': thermo_sensor.temperature, 'key': 'X0KHPVC95732ZMYV'})
-    headers = {"Content-type": "application/x-www-form-urlencoded", "Accept": "text/plain"}
-    conn = httplib.HTTPConnection("api.thingspeak.com:80")
+#New outputs object
+out = outputs()
 
-    try:
-        conn.request("POST", "/update", params, headers)
-        response = conn.getresponse()
-        data = response.read()
-        conn.close()
-    except:
-        print "connection failed"
+def signal_handler(signal, frame):
+        print('\nStopping Cooler PWM')
+        out.stopCooler()
+        print('You pressed Ctrl+C!')
+        sys.exit(0)
 
-# sleep for 16 seconds (api limit of 15 secs)
+signal.signal(signal.SIGINT, signal_handler)
+
 if __name__ == "__main__":
-    import spidev
 
     # Open database connection
     db = MySQLdb.connect("192.168.2.101","fridg","fridgpw","chillbox" )
@@ -41,54 +48,78 @@ if __name__ == "__main__":
     #Connected to raspberry pi GPIO3
     pin = 3
 
-    #Open serial port for Arduino communication  @ 115200
-    arduinoComm = serial.Serial("/dev/ttyUSB0", 115200)
+    #New PID object
+    pid = PID(P, I, D)
+    pid.clear()
+    pid.setSampleTime(PID_SAMPLE_RATE)
+    pid.SetPoint = SETPOINT
 
+    out.initCooler()
+
+    #Open serial port for Arduino communication  @ 115200
+    arduinoComm = serial.Serial("/dev/ttyUSB0", 115200, rtscts=0, timeout=5)
+
+    #Timers
+    DataUpdateTimer = 0
+    PIDSampleRateTimer = 0
+    
+    thermo_sensor = Max6675(0, 0)
     while True:
-        # Try to grab a sensor reading.  Use the read_retry method which will retry up
-        # to 15 times to get a sensor reading (waiting 2 seconds between each retry).
-        humidity, temperature = Adafruit_DHT.read_retry(sensor, pin)
-        # Note that sometimes you won't get a reading and
-        # the results will be null (because Linux can't
-        # guarantee the timing of calls to read the sensor).
-        # If this happens try again!
-        thermo_sensor = Max6675(0, 0)
+
         Flow = 0.0
         FlowPPS = 0.0
         SystemState = 3
         #Get the info from Arduino
         try:
-            #Get the next line sent by arduino ( this is blocking with a timeout of 1 sec )
+            #Get the next line sent by arduino ( this is blocking, timeout is 5 secs )
             jsonData = arduinoComm.readline()
             ArduinoData = json.loads(jsonData)
             Flow = ArduinoData["Flow"]
             FlowPPS = ArduinoData["FlowPPS"]
             SystemState = ArduinoData["State"]
+            ValidData = True
         except:
+            ValidData = False
             print "Can't read from arduino ..."
 
-        #SQL Query
-        query = "INSERT INTO `temperature` (`time`,`temperature`,`humidity`,`thermocouple`,`Flow`,`FlowPPS`,`SystemState`) VALUES (now(),%s,%s,%s,%s,%s,%s);"
-        args = (temperature,humidity,thermo_sensor.temperature,Flow,FlowPPS,SystemState)
+        # PID PROCESS
+        if ( time.time() - PIDSampleRateTimer ) > PID_SAMPLE_RATE :
+            PIDSampleRateTimer = time.time()
+            #Send the feedback value
+            pidTemperature = thermo_sensor.temperature
+            pid.update(pidTemperature)
+            #Get the output value
+            pid_output = 0 - pid.output
+            #Trim output
+            if pid_output > 100 :
+                pid_output = 100
+            elif pid_output < 0 :
+                pid_output = 0
 
-        if humidity is not None and temperature is not None and thermo_sensor is not None:
-            #print('Temp={0:0.1f}*C  Humidity={1:0.1f}%'.format(temperature, humidity))
-            #print thermo_sensor.temperature
-            #print query
-            try:
-                # Execute the SQL command
-                cursor.execute(query,args)
-                # Commit your changes in the database
-                db.commit()
-                print "OK"
-            except:
-                # Rollback in case there is any error
-                db.rollback()
-                print "Rollback - db error"
+            out.setCooler(pid_output)
+	    
+        #Debug string
+        print "SP: " + str(pid.SetPoint) + " Temp: " + str(thermo_sensor.temperature) + " PID Out: " + str(pid.output) + " PWM Out: " + str(pid_output)
         
-        #Sent to thingspeak
-        #SendThingSpeak()
-        
-        #Sleep 30 seconds
-        time.sleep(30)
+        #SQL UPDATE PROCESS
+        if ValidData:
+            if ( time.time() - DataUpdateTimer ) > 30 :
+                #SQL Query
+                query = "INSERT INTO `temperature` (`time`,`thermocouple`,`Flow`,`FlowPPS`,`SystemState`,`Setpoint`) VALUES (now(),%s,%s,%s,%s,%s);"
+                args = (thermo_sensor.temperature,Flow,FlowPPS,SystemState,pid.SetPoint)
 
+                if thermo_sensor is not None:
+
+                    try:
+                        # Execute the SQL command
+                        cursor.execute(query,args)
+                        # Commit your changes in the database
+                        db.commit()
+                        print "OK"
+                    except:
+                        # Rollback in case there is any error
+                        db.rollback()
+                        print "Rollback - db error"
+                
+                #Sleep 30 seconds
+                DataUpdateTimer = time.time()

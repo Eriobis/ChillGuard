@@ -1,0 +1,2 @@
+./arduino ../Chillbox/ArduinoCode/ChillBox_Guardian.ino --verify --board arduino:avr:nano:cpu=atmega168
+./arduino ../Chillbox/ArduinoCode/ChillBox_Guardian.ino --verify --board arduino:avr:nano:cpu=atmega168 --port /dev/ttyUSB0 -v

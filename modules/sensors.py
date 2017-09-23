@@ -1,0 +1,4 @@
+#Sensor Class
+
+class Sensors:
+    
